@@ -1,13 +1,11 @@
 use std::rc::Rc;
 
-use crate::{
-    ActiveTheme, Icon, IconName, InteractiveElementExt as _, Sizable as _, StyledExt, h_flex,
-};
+use crate::{ActiveTheme, IconName, IconNamed as _, InteractiveElementExt as _, StyledExt, h_flex};
 use gpui::{
     AnyElement, App, ClickEvent, Context, Decorations, Hsla, InteractiveElement, IntoElement,
     MouseButton, ParentElement, Pixels, Render, RenderOnce, StatefulInteractiveElement as _,
     StyleRefinement, Styled, TitlebarOptions, Window, WindowControlArea, div,
-    prelude::FluentBuilder as _, px,
+    prelude::FluentBuilder as _, px, svg,
 };
 use smallvec::SmallVec;
 
@@ -163,6 +161,7 @@ impl RenderOnce for ControlIcon {
 
         div()
             .id(self.id())
+            .group(self.id())
             .flex()
             .w(TITLE_BAR_HEIGHT)
             .h_full()
@@ -196,7 +195,16 @@ impl RenderOnce for ControlIcon {
                     }
                 })
             })
-            .child(Icon::new(self.icon()).small())
+            // An `Icon` takes its color when it is laid out, before hover is known,
+            // so the glyph follows the hover through its own group style.
+            .child(
+                svg()
+                    .flex_none()
+                    .size_3p5()
+                    .path(self.icon().path())
+                    .text_color(cx.theme().foreground)
+                    .group_hover(self.id(), |style| style.text_color(hover_fg)),
+            )
     }
 }
 

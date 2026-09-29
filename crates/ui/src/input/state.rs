@@ -290,6 +290,7 @@ pub struct InputState {
     pub(super) disabled: bool,
     pub(super) masked: bool,
     pub(super) clean_on_escape: bool,
+    pub(super) submit_on_enter: bool,
     pub(super) soft_wrap: bool,
     pub(super) pattern: Option<regex::Regex>,
     pub(super) validate: Option<Box<dyn Fn(&str, &mut Context<Self>) -> bool + 'static>>,
@@ -383,6 +384,7 @@ impl InputState {
             disabled: false,
             masked: false,
             clean_on_escape: false,
+            submit_on_enter: false,
             soft_wrap: true,
             loading: false,
             pattern: None,
@@ -698,6 +700,15 @@ impl InputState {
     /// Set true to clear the input by pressing Escape key.
     pub fn clean_on_escape(mut self) -> Self {
         self.clean_on_escape = true;
+        self
+    }
+
+    /// Set true to treat `Enter` as a submit action in multi-line mode, default is false.
+    ///
+    /// Then `Enter` only emits [`InputEvent::PressEnter`], and the secondary `Enter` inserts
+    /// the newline.
+    pub fn submit_on_enter(mut self, submit: bool) -> Self {
+        self.submit_on_enter = submit;
         self
     }
 
@@ -1148,7 +1159,7 @@ impl InputState {
             self.clear_inline_completion(cx);
         }
 
-        if self.mode.is_multi_line() {
+        if self.mode.is_multi_line() && (!self.submit_on_enter || action.secondary) {
             // Get current line indent
             let indent = if self.mode.is_code_editor() {
                 self.indent_of_next_line()
@@ -1161,7 +1172,8 @@ impl InputState {
             self.replace_text_in_range_silent(None, &new_line_text, window, cx);
             self.pause_blink_cursor(cx);
         } else {
-            // Single line input, just emit the event (e.g.: In a dialog to confirm).
+            // Single line input or submit on enter, just emit the event
+            // (e.g.: In a dialog to confirm, or a chat box to send).
             cx.propagate();
         }
 
@@ -2174,5 +2186,49 @@ impl Render for InputState {
             .children(self.diagnostic_popover.clone())
             .children(self.context_menu.as_ref().map(|menu| menu.render()))
             .children(self.hover_popover.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::RefCell, rc::Rc};
+
+    use gpui::TestAppContext;
+
+    use super::{Enter, InputEvent, InputState};
+    use crate::Theme;
+
+    #[gpui::test]
+    fn test_submit_on_enter(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.set_global(Theme::default()));
+
+        for (submit_on_enter, expected) in [(false, "\n\n"), (true, "\n")] {
+            let window = cx.add_window(|window, cx| {
+                InputState::new(window, cx)
+                    .multi_line(true)
+                    .submit_on_enter(submit_on_enter)
+            });
+            let state = window.root(cx).unwrap();
+            let events = Rc::new(RefCell::new(Vec::new()));
+            cx.update(|cx| {
+                let events = events.clone();
+                cx.subscribe(&state, move |_, event: &InputEvent, _| {
+                    if let InputEvent::PressEnter { secondary } = event {
+                        events.borrow_mut().push(*secondary);
+                    }
+                })
+                .detach();
+            });
+
+            window
+                .update(cx, |state, window, cx| {
+                    state.enter(&Enter { secondary: false }, window, cx);
+                    state.enter(&Enter { secondary: true }, window, cx);
+                    assert_eq!(state.value(), expected);
+                })
+                .unwrap();
+            cx.run_until_parked();
+            assert_eq!(*events.borrow(), vec![false, true]);
+        }
     }
 }
